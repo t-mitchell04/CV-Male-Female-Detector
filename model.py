@@ -30,7 +30,7 @@ class Dataset(Dataset):
     def classes(self):
         return self.data.classes
     
-transform = transforms.Compose([transforms.Resize((256, 256)), transforms.ToTensor()])
+transform = transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor()])
 dataset = Dataset(data_dir='./dataset/train', transform=transform)
 target_to_class = {v: k for k, v in ImageFolder('./dataset/train').class_to_idx.items()}
 print(target_to_class)
@@ -45,7 +45,7 @@ for images, labels in dataloader:
 class GenderClassifer(nn.Module):
     def __init__(self, num_classes=2):
         super(GenderClassifer, self).__init__()
-        self.base_model = timm.create_model('efficientnet_b0', pretrained=False)
+        self.base_model = timm.create_model('efficientnet_b0', pretrained=True)
         self.features = nn.Sequential(*list(self.base_model.children())[:-1])
 
         enet_out_size = 1280
@@ -80,54 +80,60 @@ print(device)
 model = GenderClassifer(num_classes=2)
 model.to(device)
 
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
-
 torch.cuda.empty_cache()
 
-for epoch in range(num_epochs):
-    model.train()
-    running_loss = 0.0
-    for images, labels in tqdm(train_loader, desc='Training loop'):
-        images, labels = images.to(device), labels.to(device)
-        optimizer.zero_grad()
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
-        running_loss += loss.item() * labels.size(0)
-    train_loss = running_loss / len(train_loader.dataset)
-    train_losses.append(train_loss)
-    print(f"Epoch {epoch+1}/{num_epochs} - Train loss: {train_loss}")
 
-plt.plot(train_losses, label='Training loss')
-plt.legend()
-plt.title("Loss over epochs")
-plt.show()
+def train(model, train_loader, test_loader, device, num_epochs=3):
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-model.eval()
-test_loss = 0.0
-correct = 0
-total = 0
-with torch.no_grad():
-    for images, labels in tqdm(test_loader, desc="Testing loop"):
-        images, labels = images.to(device), labels.to(device)
+    train_losses = []
+    for epoch in range(num_epochs):
+        model.train()
+        running_loss = 0.0
 
-        outputs = model(images)
-        loss = criterion(outputs, labels)
+        for images, labels in tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}"):
+            images, labels = images.to(device), labels.to(device)
 
-        test_loss += loss.item() * labels.size(0)
+            optimizer.zero_grad()
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
 
-        _, predicted = torch.max(outputs, dim=1)
+            running_loss += loss.item() * labels.size(0)
 
-        total += labels.size(0)
-        correct += (predicted == labels).sum().item()
-avg_test_loss = test_loss / len(test_loader.dataset)
-accuracy = correct / total
-print(f"Test loss: {avg_test_loss:.4f}  |  Test accuracy: {accuracy*100:.2f}%")
+        train_loss = running_loss / len(train_loader.dataset)
+        train_losses.append(train_loss)
+        print(f"Train loss: {train_loss:.4f}")
 
-torch.save({
-    "model_state": model.state_dict(),
-    "optimizer_state": optimizer.state_dict(),
-    "epoch": epoch
-}, "model.pth")
+    model.eval()
+    test_loss = 0.0
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for images, labels in tqdm(test_loader, desc="Testing loop"):
+            images, labels = images.to(device), labels.to(device)
+
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+
+            test_loss += loss.item() * labels.size(0)
+
+            _, predicted = torch.max(outputs, dim=1)
+
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+    avg_test_loss = test_loss / len(test_loader.dataset)
+    accuracy = correct / total
+    print(f"Test loss: {avg_test_loss:.4f}  |  Test accuracy: {accuracy*100:.2f}%")
+
+    torch.save({
+        "model_state": model.state_dict(),
+        "epoch": epoch,
+        "optimizer_state": optimizer.state_dict(),
+    }, "model.pth")
+
+if __name__ == "__main__":
+    model = GenderClassifer().to(device)
+    train(model, train_loader, test_loader, device, num_epochs=3)
